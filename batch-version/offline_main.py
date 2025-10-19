@@ -174,7 +174,7 @@ def add_model_options(parser):
         "--normalization",
         type=str,
         default="none",
-        choices=["none", "batchnorm", "layernorm"],
+        choices=["none", "batchnorm", "layernorm", 'weightnorm'],
         help="Type of normalization, every string different from batchnorm "
     )
     parser.add_argument(
