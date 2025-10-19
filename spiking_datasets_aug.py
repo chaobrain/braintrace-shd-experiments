@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 __all__ = [
-    'load_dataset',
+    'load_shd_data',
 ]
 
 
@@ -172,24 +172,6 @@ class NormalizeSpikeCount:
 # ===============================
 
 class SpikingDataset(Dataset):
-    """
-    Dataset class for the Spiking Heidelberg Digits (SHD) or
-    Spiking Speech Commands (SSC) dataset.
-
-    Arguments
-    ---------
-    dataset_name : str
-        Name of the dataset, either shd or ssc.
-    data_folder : str
-        Path to folder containing the dataset (h5py file).
-    split : str
-        Split of the SHD dataset, must be either "train" or "test".
-    nb_steps : int
-        Number of time steps for the generated spike trains.
-    transform : Callable[[Tensor, Any], (Tensor, Any)]
-        Per-sample transform applied on dense [T, C] spikes.
-    """
-
     def __init__(
         self,
         dataset_name: str,
@@ -237,17 +219,6 @@ class SpikingDataset(Dataset):
         xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True)
         ys = torch.LongTensor(ys).to(self.device)
         return xs, ys
-
-
-# We need to stack the batch elements
-def _numpy_collate(batch):
-    if isinstance(batch[0], np.ndarray):
-        return np.stack(batch)
-    elif isinstance(batch[0], (tuple, list)):
-        transposed = zip(*batch)
-        return [_numpy_collate(samples) for samples in transposed]
-    else:
-        return np.array(batch)
 
 
 # ===============================
@@ -374,10 +345,3 @@ def load_shd_data(args):
             'input_process': lambda x: x,
         }
     )
-
-
-def load_dataset(args):
-    if args.dataset_name == 'shd':
-        return load_shd_data(args)
-    else:
-        raise ValueError(f'Unknown dataset name: {args.dataset_name}')

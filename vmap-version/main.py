@@ -51,13 +51,6 @@ def add_training_options(parser):
         default=None,
         help="Path to output folder to store experiment."
     )
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        choices=["shd", "ssc", "gesture", "gesturev2", "nmnist", "nmnistv2"],
-        default="shd",
-        help="Dataset name (shd, ssc, hd or sc)."
-    )
     args, _ = parser.parse_known_args()
 
     parser.add_argument(

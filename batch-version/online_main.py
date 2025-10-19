@@ -38,8 +38,6 @@ def add_training_options(parser_):
                               "that the same path will be used to store the current experiment.")
     parser_.add_argument("--mode", type=str, default='train', )
     parser_.add_argument("--new_exp_folder", type=str, default=None, help="Path to output folder to store experiment.")
-    parser_.add_argument("--dataset_name", choices=["shd", "ssc", "gesture", "gesturev2", "nmnist", "nmnistv2"],
-                         type=str, default="shd", help="Dataset name (shd, ssc, hd or sc).")
     args, _ = parser_.parse_known_args()
 
     parser_.add_argument('--data_length', type=int, default=100)

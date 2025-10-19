@@ -62,13 +62,6 @@ def add_training_options(parser):
         help="Path to dataset folder.",
     )
     parser.add_argument(
-        "--dataset_name",
-        choices=["shd", "ssc", "gesture", "gesturev2", "nmnist", "nmnistv2"],
-        type=str,
-        default="shd",
-        help="Dataset name (shd, ssc, hd or sc)."
-    )
-    parser.add_argument(
         "--mode",
         type=str,
         default='train',
