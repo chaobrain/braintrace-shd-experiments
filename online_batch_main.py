@@ -4,9 +4,6 @@ This is the script used to run experiments.
 
 import os
 import platform
-import sys
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 from general_utils import MyArgumentParser
 
@@ -111,7 +108,7 @@ args = parser.parse_args()
 
 
 def main():
-    from online_model import Experiment
+    from online_batch_model import Experiment
 
     # Instantiate class for the desired experiment
     experiment = Experiment(args)

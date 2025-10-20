@@ -15,9 +15,6 @@
 
 
 import os
-import sys
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 from general_utils import MyArgumentParser
 
@@ -201,14 +198,14 @@ def parse_args():
 def main():
     """
     Runs model training/testing using the configuration specified
-    by the parser arguments. Run `python main.py -h` for details.
+    by the parser arguments. Run `python online_vmap_main.py -h` for details.
     """
 
     # Get experiment configuration from parser
     args = parse_args()
 
     # Instantiate class for the desired experiment
-    from models import Experiment
+    from online_vmap_models import Experiment
     experiment = Experiment(args)
 
     # Run experiment
