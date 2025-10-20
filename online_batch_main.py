@@ -26,7 +26,7 @@ def strtobool(val):
 
 
 num_worker = 0 if platform.system() == 'Windows' else 5
-shd_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../data/SHD/'))
+shd_path = os.path.abspath(os.path.join(os.path.dirname(__file__), './data/SHD/'))
 
 
 def add_training_options(parser_):

@@ -58,7 +58,7 @@ def add_training_options(parser):
     parser.add_argument(
         "--data_folder",
         type=str,
-        default=os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '../data/SHD/')),
+        default=os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), './data/SHD/')),
         help="Path to dataset folder.",
     )
     parser.add_argument(

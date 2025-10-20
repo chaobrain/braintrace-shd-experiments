@@ -27,7 +27,7 @@ def strtobool(val):
 
 num_worker = 0 if platform.system() == 'Windows' else 5
 shd_path = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '../data/SHD/')
+    os.path.join(os.path.dirname(__file__), './data/SHD/')
 )
 
 
