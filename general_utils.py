@@ -69,10 +69,13 @@ class MyArgumentParser(argparse.ArgumentParser):
 
         # training method
         if args.method != 'bptt':
-            self.add_argument("--vjp_method", type=str, default='multi-step', choices=['multi-step', 'single-step'])
+            self.add_argument(
+                "--vjp_method", type=str, default='multi-step', choices=['multi-step', 'single-step']
+            )
             if args.method != 'd-rtrl':
-                self.add_argument("--etrace_decay", type=float, default=0.99,
-                                  help="The time constant of eligibility trace.")
+                self.add_argument(
+                    "--etrace_decay", type=float, default=0.99, help="The time constant of eligibility trace."
+                )
 
 
 def copy_files(tar_dir, dest_dir):
@@ -114,10 +117,7 @@ def save_model_states(
     """
     import brainstate
     import braintools
-    state = {
-        'state_dict': model.states(brainstate.LongTermState),
-        **kwargs
-    }
+    state = {'state_dict': model.states(brainstate.LongTermState), **kwargs}
     if optimizer is not None:
         state['optimizer_state_dict'] = brainstate.graph.states(optimizer)
     braintools.file.msgpack_save(save_path, state)
@@ -150,10 +150,7 @@ def load_model_states(
     """
     import brainstate
     import braintools
-    state = {
-        'state_dict': model.states(brainstate.LongTermState),
-        **kwargs
-    }
+    state = {'state_dict': model.states(brainstate.LongTermState), **kwargs}
     if optimizer is not None:
         state['optimizer_state_dict'] = brainstate.graph.states(optimizer)
     pytree = braintools.file.msgpack_load(save_path, state)

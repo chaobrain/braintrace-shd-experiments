@@ -74,6 +74,11 @@ def add_training_options(parser):
         type=str,
         default='train',
     )
+    parser.add_argument(
+        "--surrogate",
+        type=str,
+        default='boxcar',
+    )
     args, _ = parser.parse_known_args()
 
     parser.add_argument(
@@ -86,13 +91,13 @@ def add_training_options(parser):
         type=lambda x: bool(strtobool(str(x))),
         default=True,
         help="If True, the model from the epoch with the highest validation "
-             "accuracy is saved, if False, no model is saved."
+             "accuracy is saved, if False, no model is saved. "
     )
     parser.add_argument(
         "--batch_size",
         type=int,
         default=128,
-        help="Number of input examples inside a single batch."
+        help="Number of input examples inside a single batch. "
     )
     parser.add_argument(
         "--nb_epochs",
@@ -110,7 +115,7 @@ def add_training_options(parser):
         type=int,
         default=0,
         help="Epoch number to start training at. Will be 0 if no pretrained "
-             "model is given. First epoch will be start_epoch+1."
+             "model is given. First epoch will be start_epoch+1. "
     )
     parser.add_argument(
         "--lr",
@@ -155,6 +160,11 @@ def add_model_options(parser):
         type=int,
         default=3,
         help="Number of layers (including readout layer)."
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=1.0,
     )
     parser.add_argument(
         "--nb_hiddens",

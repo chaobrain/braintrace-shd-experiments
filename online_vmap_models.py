@@ -38,7 +38,7 @@ from spiking_datasets_aug import load_shd_data
 
 
 def print_model_options(logger, args):
-    logger.warning('parameters: {}'.format(vars(args)))
+    logger.warning(str(vars(args)))
     logger.warning(
         """
         Model Config
@@ -60,7 +60,6 @@ def print_training_options(logger, args):
         ---------------
         Load experiment folder: {load_exp_folder}
         New experiment folder: {new_exp_folder}
-        Dataset name: {dataset_name}
         Data folder: {data_folder}
         Save best model: {save_best}
         Batch size: {batch_size}
@@ -964,7 +963,6 @@ class Experiment(brainstate.util.PrettyObject):
         # Training config
         self.load_exp_folder = args.load_exp_folder
         self.new_exp_folder = args.new_exp_folder
-        self.dataset_name = args.dataset_name
         self.data_folder = args.data_folder
         self.save_best = args.save_best
         self.batch_size = args.batch_size
@@ -1228,9 +1226,9 @@ class Experiment(brainstate.util.PrettyObject):
         else:
             # Generate a path for new model from chosen config
             if self.args.method == 'esd-rtrl':
-                outname = f'{self.args.method}_{self.args.etrace_decay}_{self.dataset_name}/'
+                outname = f'{self.args.method}_{self.args.etrace_decay}/'
             else:
-                outname = f'{self.args.method}_{self.dataset_name}/'
+                outname = f'{self.args.method}/'
             outname = outname + self.net_type + "_"
             outname += str(self.nb_layers) + "lay" + str(self.nb_hiddens)
             outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
