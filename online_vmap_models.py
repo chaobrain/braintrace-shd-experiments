@@ -15,7 +15,6 @@
 
 
 import datetime
-import errno
 import os
 import time
 from datetime import timedelta
@@ -220,32 +219,22 @@ class SNN(brainstate.nn.Module):
         self,
         input_shape,
         layer_sizes,
+        args: brainstate.util.DotDict,
         neuron_type: str = "LIF",
-        threshold: float = 0.5,
-        dropout: float = 0.0,
-        inp_scale: float = 5 ** 0.5,
-        rec_scale: float = 1.0,
-        normalization: str = "batchnorm",
-        surrogate: str = "boxcar",
         use_bias: bool = False,
         use_readout_layer: bool = True,
     ):
         super().__init__()
 
         # Fixed parameters
-        self.surrogate = surrogate
         self.input_size = input_shape
         self.layer_sizes = layer_sizes
         self.num_layers = len(layer_sizes)
         self.num_outputs = layer_sizes[-1]
         self.neuron_type = neuron_type
-        self.threshold = threshold
-        self.dropout = dropout
-        self.normalization = normalization
+        self.args = args
         self.use_bias = use_bias
         self.use_readout_layer = use_readout_layer
-        self.inp_scale = inp_scale
-        self.rec_scale = rec_scale
 
         if neuron_type not in ["LIF", "adLIF", "RLIF", "RadLIF"]:
             raise ValueError(f"Invalid neuron type {neuron_type}")
@@ -257,26 +246,19 @@ class SNN(brainstate.nn.Module):
         snn = []
         input_size = self.input_size
         snn_class = self.neuron_type + "Layer"
+        cls = globals()[snn_class]
 
+        # Hidden layers
         if self.use_readout_layer:
             num_hidden_layers = self.num_layers - 1
         else:
             num_hidden_layers = self.num_layers
-
-        # Hidden layers
         for i in range(num_hidden_layers):
             snn.append(
-                globals()[snn_class](
-                    input_size=input_size,
+                cls(input_size=input_size,
                     hidden_size=self.layer_sizes[i],
-                    threshold=self.threshold,
-                    dropout=self.dropout,
-                    normalization=self.normalization,
-                    surrogate=self.surrogate,
                     use_bias=self.use_bias,
-                    inp_scale=self.inp_scale,
-                    rec_scale=self.rec_scale,
-                )
+                    args=self.args)
             )
             input_size = self.layer_sizes[i]
 
@@ -286,8 +268,7 @@ class SNN(brainstate.nn.Module):
                 ReadoutLayer(
                     input_size=input_size,
                     hidden_size=self.layer_sizes[-1],
-                    dropout=self.dropout,
-                    normalization=self.normalization,
+                    args=self.args,
                     use_bias=self.use_bias,
                 )
             )
@@ -350,31 +331,40 @@ class FakeState:
         return x
 
 
-class LayerWithNormalization(brainstate.nn.Module):
-    def add_spk(self, surrogate: str):
-        if surrogate == 'boxcar':
-            self.spike_fct = SpikeFunctionBoxcar()
-        elif surrogate == 'relu':
-            self.spike_fct = braintools.surrogate.ReluGrad()
-        else:
-            raise NotImplementedError
+class BaseLayer(brainstate.nn.Module):
+    def __init__(self, args):
+        super().__init__()
 
-    def add_norm(self, normalization):
+        self.args = args
+
         # Initialize normalization
         self.normalize = False
-        if normalization == "layernorm":
+        if args.normalization == "layernorm":
             # self.norm = brainscale.nn.LayerNorm(self.hidden_size, param_type=brainstate.FakeState)
-            self.norm = brainstate.nn.LayerNorm(self.hidden_size, param_type=FakeState)
+            self.norm = brainstate.nn.LayerNorm(self.hidden_size, param_type=brainscale.FakeElemWiseParam)
             self.normalize = True
-        elif normalization == "rmsnorm":
+        elif args.normalization == "rmsnorm":
             self.norm = brainscale.nn.RMSNorm(self.hidden_size)
             self.normalize = True
-        elif normalization == "batchnorm":
+        elif args.normalization == "batchnorm":
             self.norm = BatchNorm0d(self.hidden_size)
             self.normalize = True
-        elif normalization == "dyt":
+        elif args.normalization == "dyt":
             self.norm = DyT(self.hidden_size)
             self.normalize = True
+
+        if args.surrogate == 'boxcar':
+            self.spike_fct = SpikeFunctionBoxcar()
+        elif args.surrogate == 'relu':
+            self.spike_fct = braintools.surrogate.ReluGrad()
+        elif args.surrogate == 'gaussian':
+            self.spike_fct = braintools.surrogate.GaussianGrad()
+        elif args.surrogate == 'multi_gaussian':
+            self.spike_fct = braintools.surrogate.MultiGaussianGrad()
+        elif args.surrogate == 'sigmoid':
+            self.spike_fct = braintools.surrogate.Sigmoid()
+        else:
+            raise ValueError("Unsupported surrogate type")
 
     def apply_norm(self, x):
         if self.normalize:
@@ -423,70 +413,38 @@ class Linear(brainstate.nn.Module):
         return self.weight_op.execute(x)
 
 
-class LIFLayer(LayerWithNormalization):
-    """
-    A single layer of Leaky Integrate-and-Fire neurons without layer-wise
-    recurrent connections (LIF).
-
-    Arguments
-    ---------
-    input_size : int
-        Number of features in the input tensors.
-    hidden_size : int
-        Number of output neurons.
-    threshold : float
-        Value of spiking threshold (fixed)
-    dropout : float
-        Dropout factor (must be between 0 and 1).
-    normalization : str
-        Type of normalization. Every string different from 'batchnorm'
-        and 'layernorm' will result in no normalization.
-    use_bias : bool
-        If True, additional trainable bias is used with feedforward weights.
-    """
-
+class LIFLayer(BaseLayer):
     def __init__(
         self,
         input_size,
         hidden_size,
-        surrogate,
-        threshold: float = 0.5,
-        dropout: float = 0.0,
-        normalization: str = "batchnorm",
+        args: brainstate.util.DotDict,
         use_bias: bool = False,
-        inp_scale: float = 5 ** 0.5,
-        rec_scale: float = 1.0,
     ):
-        super().__init__()
+        super().__init__(args)
 
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
-        self.threshold = threshold
-        self.dropout = dropout
-        self.normalization = normalization
         self.use_bias = use_bias
-        self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 100)]
-        self.add_spk(surrogate)
+        self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
+        super().__init__(args=args)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = Linear(
             self.input_size,
             self.hidden_size,
-            w_init=KaimingUniform(inp_scale),
+            w_init=KaimingUniform(args.inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
-            weight_norm=normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
         )
 
-        # Initialize normalization
-        self.add_norm(normalization)
-
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - dropout)
+        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -499,9 +457,16 @@ class LIFLayer(LayerWithNormalization):
         s = self.drop(s)
         return s
 
-    def init_state(self, *args, **kwargs):
-        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
-        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+    def init_state(self, batch_size=None, *args, **kwargs):
+        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
+        if self.args.state_init == 'zero':
+            self.ut = brainstate.HiddenState(jnp.zeros(*size))
+            self.st = brainstate.HiddenState(jnp.zeros(*size))
+        elif self.args.state_init == 'rand':
+            self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        else:
+            raise ValueError("Unsupported state initialization type")
 
     def _lif_cell(self, Wx):
         alpha = self.alpha.execute()
@@ -511,70 +476,40 @@ class LIFLayer(LayerWithNormalization):
         ut = alpha * self.ut.value - alpha * self.st.value + (1 - alpha) * Wx
 
         # Compute spikes with surrogate gradient
-        # jax.debug.print('ut = {ut}', ut=ut)
-        st = self.spike_fct(ut - self.threshold)
+        st = self.spike_fct(ut - self.args.threshold)
         self.ut.value = ut
         self.st.value = st
         return st
 
 
-class adLIFLayer(LayerWithNormalization):
-    """
-    A single layer of adaptive Leaky Integrate-and-Fire neurons without
-    layer-wise recurrent connections (adLIF).
-
-    Arguments
-    ---------
-    input_size : int
-        Number of features in the input tensors.
-    hidden_size : int
-        Number of output neurons.
-    threshold : float
-        Value of spiking threshold (fixed)
-    dropout : float
-        Dropout factor (must be between 0 and 1).
-    normalization : str
-        Type of normalization. Every string different from 'batchnorm'
-        and 'layernorm' will result in no normalization.
-    use_bias : bool
-        If True, additional trainable bias is used with feedforward weights.
-    """
-
+class adLIFLayer(BaseLayer):
     def __init__(
         self,
         input_size,
         hidden_size,
-        surrogate,
-        threshold: float = 0.5,
-        dropout: float = 0.0,
-        normalization: str = "batchnorm",
+        args: brainstate.util.DotDict,
         use_bias: bool = False,
-        inp_scale: float = 5 ** 0.5,
-        rec_scale: float = 1.0,
     ):
-        super().__init__()
+        super().__init__(args)
 
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
-        self.threshold = threshold
-        self.dropout = dropout
-        self.normalization = normalization
         self.use_bias = use_bias
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
         self.beta_lim = [np.exp(-1 / 30), np.exp(-1 / 120)]
         self.a_lim = [-1.0, 1.0]
         self.b_lim = [0.0, 2.0]
-        self.add_spk(surrogate)
+        super().__init__(args=args)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = Linear(
             self.input_size,
             self.hidden_size,
-            w_init=KaimingUniform(inp_scale),
+            w_init=KaimingUniform(args.inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
-            weight_norm=normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -589,11 +524,8 @@ class adLIFLayer(LayerWithNormalization):
             brainstate.random.uniform(self.b_lim[0], self.b_lim[1], size=self.hidden_size),
         )
 
-        # Initialize normalization
-        self.add_norm(normalization)
-
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - dropout)
+        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -606,10 +538,20 @@ class adLIFLayer(LayerWithNormalization):
         s = self.drop(s)
         return s
 
-    def init_state(self, *args, **kwargs):
-        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
-        self.wt = brainstate.HiddenState(jnp.zeros(self.hidden_size))
-        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+    def init_state(self, batch_size=None, *args, **kwargs):
+        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
+        if self.args.state_init == 'zero':
+            self.ut = brainstate.HiddenState(jnp.zeros(*size))
+            self.wt = brainstate.HiddenState(jnp.zeros(*size))
+            self.st = brainstate.HiddenState(jnp.zeros(*size))
+
+        elif self.args.state_init == 'rand':
+            self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.wt = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+
+        else:
+            raise ValueError("Unsupported initial state type")
 
     def _adlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -623,7 +565,7 @@ class adLIFLayer(LayerWithNormalization):
         ut = alpha * self.ut.value - alpha * self.st.value + (1 - alpha) * (Wx - wt)
 
         # Compute spikes with surrogate gradient
-        st = self.spike_fct(ut - self.threshold)
+        st = self.spike_fct(ut - self.args.threshold)
 
         self.ut.value = ut
         self.wt.value = wt
@@ -631,60 +573,29 @@ class adLIFLayer(LayerWithNormalization):
         return st
 
 
-class RLIFLayer(LayerWithNormalization):
-    """
-    A single layer of Leaky Integrate-and-Fire neurons with layer-wise
-    recurrent connections (RLIF).
-
-    Arguments
-    ---------
-    input_size : int
-        Number of features in the input tensors.
-    hidden_size : int
-        Number of output neurons.
-    threshold : float
-        Value of spiking threshold (fixed)
-    dropout : float
-        Dropout factor (must be between 0 and 1).
-    normalization : str
-        Type of normalization. Every string different from 'batchnorm'
-        and 'layernorm' will result in no normalization.
-    use_bias : bool
-        If True, additional trainable bias is used with feedforward weights.
-    """
-
+class RLIFLayer(BaseLayer):
     def __init__(
         self,
         input_size,
         hidden_size,
-        surrogate,
-        threshold: float = 0.5,
-        dropout: float = 0.0,
-        normalization: str = "batchnorm",
+        args: brainstate.util.DotDict,
         use_bias: bool = False,
-        inp_scale: float = 5 ** 0.5,
-        rec_scale: float = 1.0,
     ):
-        super().__init__()
-
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
-        self.threshold = threshold
-        self.dropout = dropout
-        self.normalization = normalization
         self.use_bias = use_bias
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
-        self.add_spk(surrogate)
+        super().__init__(args=args)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = Linear(
             self.input_size,
             self.hidden_size,
-            w_init=KaimingUniform(inp_scale),
+            w_init=KaimingUniform(args.inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
-            weight_norm=normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm',
         )
         # Set diagonal elements of recurrent matrix to zero
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
@@ -692,20 +603,17 @@ class RLIFLayer(LayerWithNormalization):
         self.V = Linear(
             self.hidden_size,
             self.hidden_size,
-            w_init=Orthogonal(rec_scale),
+            w_init=Orthogonal(args.rec_scale),
             b_init=None,
             # w_mask=w_mask
-            weight_norm=normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
         )
 
-        # Initialize normalization
-        self.add_norm(normalization)
-
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - dropout)
+        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -718,9 +626,16 @@ class RLIFLayer(LayerWithNormalization):
         s = self.drop(s)
         return s
 
-    def init_state(self, *args, **kwargs):
-        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
-        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+    def init_state(self, batch_size=None, **kwargs):
+        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
+        if self.args.state_init == 'zero':
+            self.ut = brainstate.HiddenState(jnp.zeros(*size))
+            self.st = brainstate.HiddenState(jnp.zeros(*size))
+        elif self.args.state_init == 'rand':
+            self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        else:
+            raise ValueError('Not supported state initialization type')
 
     def _rlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -730,70 +645,39 @@ class RLIFLayer(LayerWithNormalization):
         ut = alpha * self.ut.value - alpha * self.st.value + (1 - alpha) * (Wx + self.V(self.st.value))
 
         # Compute spikes with surrogate gradient
-        st = self.spike_fct(ut - self.threshold)
+        st = self.spike_fct(ut - self.args.threshold)
 
         self.ut.value = ut
         self.st.value = st
         return st
 
 
-class RadLIFLayer(LayerWithNormalization):
-    """
-    A single layer of adaptive Leaky Integrate-and-Fire neurons with layer-wise
-    recurrent connections (RadLIF).
-
-    Arguments
-    ---------
-    input_size : int
-        Number of features in the input tensors.
-    hidden_size : int
-        Number of output neurons.
-    threshold : float
-        Value of spiking threshold (fixed)
-    dropout : float
-        Dropout factor (must be between 0 and 1).
-    normalization : str
-        Type of normalization. Every string different from 'batchnorm'
-        and 'layernorm' will result in no normalization.
-    use_bias : bool
-        If True, additional trainable bias is used with feedforward weights.
-    """
-
+class RadLIFLayer(BaseLayer):
     def __init__(
         self,
         input_size,
         hidden_size,
-        surrogate,
-        threshold: float = 0.5,
-        dropout: float = 0.0,
-        normalization: str = "batchnorm",
+        args: brainstate.util.DotDict,
         use_bias: bool = False,
-        inp_scale: float = 5 ** 0.5,
-        rec_scale: float = 1.0,
     ):
-        super().__init__()
-
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
-        self.threshold = threshold
-        self.dropout = dropout
-        self.normalization = normalization
         self.use_bias = use_bias
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
         self.beta_lim = [np.exp(-1 / 30), np.exp(-1 / 120)]
         self.a_lim = [-1.0, 1.0]
         self.b_lim = [0.0, 2.0]
-        self.add_spk(surrogate)
+        super().__init__(args=args)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = Linear(
             self.input_size,
             self.hidden_size,
-            w_init=KaimingUniform(inp_scale),
+            w_init=KaimingUniform(args.inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
-            weight_norm=normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm',
         )
         # Set diagonal elements of recurrent matrix to zero
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
@@ -801,10 +685,10 @@ class RadLIFLayer(LayerWithNormalization):
         self.V = Linear(
             self.hidden_size,
             self.hidden_size,
-            w_init=Orthogonal(rec_scale),
+            w_init=Orthogonal(args.rec_scale),
             b_init=None,
             # w_mask=w_mask
-            weight_norm=normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -819,11 +703,8 @@ class RadLIFLayer(LayerWithNormalization):
             brainstate.random.uniform(self.b_lim[0], self.b_lim[1], size=self.hidden_size),
         )
 
-        # Initialize normalization
-        self.add_norm(normalization)
-
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - dropout)
+        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -837,10 +718,18 @@ class RadLIFLayer(LayerWithNormalization):
 
         return s
 
-    def init_state(self, *args, **kwargs):
-        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
-        self.wt = brainstate.HiddenState(jnp.zeros(self.hidden_size))
-        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+    def init_state(self, batch_size=None, **kwargs):
+        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
+        if self.args.state_init == 'zero':
+            self.ut = brainstate.HiddenState(jnp.zeros(*size))
+            self.wt = brainstate.HiddenState(jnp.zeros(*size))
+            self.st = brainstate.HiddenState(jnp.zeros(*size))
+        elif self.args.state_init == 'rand':
+            self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.wt = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        else:
+            raise ValueError("Unsupported state_init type")
 
     def _radlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -854,7 +743,7 @@ class RadLIFLayer(LayerWithNormalization):
         ut = alpha * self.ut.value - alpha * self.st.value + (1 - alpha) * (Wx + self.V(self.st.value) - wt)
 
         # Compute spikes with surrogate gradient
-        st = self.spike_fct(ut - self.threshold)
+        st = self.spike_fct(ut - self.args.threshold)
 
         self.ut.value = ut
         self.wt.value = wt
@@ -862,44 +751,20 @@ class RadLIFLayer(LayerWithNormalization):
         return st
 
 
-class ReadoutLayer(LayerWithNormalization):
-    """
-    This function implements a single layer of non-spiking Leaky Integrate and
-    Fire (LIF) neurons, where the output consists of a cumulative sum of the
-    membrane potential using a softmax function, instead of spikes.
-
-    Arguments
-    ---------
-    input_size : int
-        Feature dimensionality of the input tensors.
-    hidden_size : int
-        Number of output neurons.
-    dropout : float
-        Dropout factor (must be between 0 and 1).
-    normalization : str
-        Type of normalization. Every string different from 'batchnorm'
-        and 'layernorm' will result in no normalization.
-    use_bias : bool
-        If True, additional trainable bias is used with feedforward weights.
-    """
-
+class ReadoutLayer(BaseLayer):
     def __init__(
         self,
         input_size,
         hidden_size,
-        dropout: float = 0.0,
-        normalization: str = "batchnorm",
+        args: brainstate.util.DotDict,
         use_bias: bool = False,
     ):
-        super().__init__()
-
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
-        self.dropout = dropout
-        self.normalization = normalization
         self.use_bias = use_bias
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
+        super().__init__(args=args)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
@@ -907,17 +772,14 @@ class ReadoutLayer(LayerWithNormalization):
             self.input_size,
             self.hidden_size,
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
-            weight_norm=normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
         )
 
-        # Initialize normalization
-        self.add_norm(normalization)
-
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - dropout)
+        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -927,9 +789,9 @@ class ReadoutLayer(LayerWithNormalization):
         out = self._readout_cell(Wx)
         return out
 
-    def init_state(self, *args, **kwargs):
-        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
-        # self.out = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+    def init_state(self, batch_size=None, **kwargs):
+        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
+        self.ut = brainstate.HiddenState(jnp.zeros(size))
 
     def _readout_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -1220,25 +1082,21 @@ class Experiment(brainstate.util.PrettyObject):
         """
 
         # Use given path for new model folder
-        if self.new_exp_folder is not None:
-            exp_folder = self.new_exp_folder
-
+        exp_folder = self.new_exp_folder if self.new_exp_folder is not None else './'
+        # Generate a path for new model from chosen config
+        if self.args.method == 'esd-rtrl':
+            outname = f'{exp_folder}/{self.args.method}_{self.args.etrace_decay}/'
         else:
-            # Generate a path for new model from chosen config
-            if self.args.method == 'esd-rtrl':
-                outname = f'{self.args.method}_{self.args.etrace_decay}/'
-            else:
-                outname = f'{self.args.method}/'
-            outname = outname + self.net_type + "_"
-            outname += str(self.nb_layers) + "lay" + str(self.nb_hiddens)
-            outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
-            outname += "_bias" if self.use_bias else "_nobias"
-            outname += "_lr" + str(self.lr)
-            exp_folder = f"{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}/"
+            outname = f'{exp_folder}/{self.args.method}/'
+        outname = outname + self.net_type + "_"
+        outname += str(self.nb_layers) + "lay" + str(self.nb_hiddens)
+        outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
+        outname += "_bias" if self.use_bias else "_nobias"
+        outname += "_lr" + str(self.lr)
+        exp_folder = f"{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}/"
 
         # For a new model check that out path does not exist
-        if os.path.exists(exp_folder):
-            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), exp_folder)
+        os.makedirs(exp_folder, exist_ok=True)
 
         # Create folders to store experiment
         self.log_dir = exp_folder
@@ -1272,17 +1130,12 @@ class Experiment(brainstate.util.PrettyObject):
 
         if self.net_type in ["LIF", "adLIF", "RLIF", "RadLIF"]:
             self.net = SNN(
-                threshold=self.args.threshold,
-                surrogate=self.args.surrogate,
                 input_shape=self.nb_inputs,
                 layer_sizes=layer_sizes,
                 neuron_type=self.net_type,
-                dropout=self.pdrop,
-                normalization=self.normalization,
+                args=self.args,
                 use_bias=self.use_bias,
                 use_readout_layer=True,
-                inp_scale=self.args.inp_scale,
-                rec_scale=self.args.rec_scale,
             )
             self.logger.warning(f"\nCreated new spiking model:\n {self.net}\n")
 

@@ -306,3 +306,4 @@ cython_debug/
 /records/
 /bash-files/
 /bptt-surrogate/
+/analysis.py

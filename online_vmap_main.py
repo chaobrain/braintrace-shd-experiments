@@ -169,6 +169,13 @@ def add_model_options(parser):
         default=5.0
     )
     parser.add_argument(
+        "--state_init",
+        type=str,
+        default='rand',
+        choices=('rand', 'zero'),
+        help="Path to output folder to store experiment."
+    )
+    parser.add_argument(
         "--normalization",
         type=str,
         default="none",

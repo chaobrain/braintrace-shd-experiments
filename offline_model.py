@@ -226,7 +226,7 @@ class BaseLayer(brainstate.nn.Module):
             raise ValueError("Unsupported surrogate type")
 
     def apply_norm(self, Wx):
-        if self.args.normalization in ['batchnorm', 'weightnorm']:
+        if self.args.normalization in ['batchnorm', 'layernorm']:
             shape = Wx.shape
             Wx = self.norm(Wx.reshape(-1, Wx.shape[-1]))
             Wx = Wx.reshape(shape)
