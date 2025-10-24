@@ -32,7 +32,7 @@ from brainstate.typing import ArrayLike
 
 from general_utils import setup_logging, load_model_states, save_model_states
 from init import KaimingUniform, Orthogonal
-from spiking_datasets_aug import load_shd_data
+from spiking_datasets_augv2 import load_shd_data
 
 
 def print_model_options(logger, args):
@@ -608,6 +608,14 @@ class ReadoutLayer(BaseLayer):
         # return out
 
 
+import optax
+
+
+def ce_with_optax(logits: jnp.ndarray, targets: jnp.ndarray) -> jnp.ndarray:
+    # targets: [B,K] soft；若是硬标签，先 one_hot 再传入
+    return jnp.mean(optax.softmax_cross_entropy(logits, targets))
+
+
 class Experiment(brainstate.util.PrettyObject):
     """
     Class for training and testing models (ANNs and SNNs) on all four
@@ -725,9 +733,14 @@ class Experiment(brainstate.util.PrettyObject):
         return outs
 
     def _loss(self, predictions, targets):
-        return braintools.metric.softmax_cross_entropy_with_integer_labels(predictions, targets).mean()
+        if targets.ndim == 2:
+            return ce_with_optax(predictions, targets)
+        else:
+            return braintools.metric.softmax_cross_entropy_with_integer_labels(predictions, targets).mean()
 
     def _acc(self, predictions, target):
+        if target.ndim == 2:
+            return jnp.mean(jnp.equal(jnp.argmax(target, axis=1), jnp.argmax(predictions, axis=1)))
         return jnp.mean(jnp.equal(target, jnp.argmax(predictions, axis=1)))
 
     def _process_input(self, inputs):

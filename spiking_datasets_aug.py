@@ -14,14 +14,15 @@
 # ==============================================================================
 
 
+import argparse
 import platform
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
-import brainstate
 import h5py
 import numpy as np
 import torch
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 
 __all__ = [
@@ -232,7 +233,7 @@ class SpikingDataset(Dataset):
 
     def generate_batch(self, batch):
         xs, ys = zip(*batch)
-        xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True)
+        xs = pad_sequence(xs, batch_first=True)
         ys = torch.LongTensor(ys).to(self.device)
         return xs, ys
 
@@ -242,24 +243,26 @@ class SpikingDataset(Dataset):
 # ===============================
 
 def _build_train_transform(args) -> Optional[Callable]:
-    # 默认开启：时间平移 shift
-    ts_max = getattr(args, 'aug_shift_max', 20)  # 默认 20 个 time-steps
-    ts_p = getattr(args, 'aug_shift_p', 1.0)  # 默认每样本都平移
-    ts_mode = getattr(args, 'aug_shift_mode', 'wrap')  # 默认循环移位
+    # Time shift augmentation
+    ts_max = args.aug_shift_max
+    ts_p = args.aug_shift_p
+    ts_mode = args.aug_shift_mode
 
-    # 其余增强默认关闭
-    cj_rate = getattr(args, 'aug_channel_jitter_rate', 0.0)
-    cj_k = getattr(args, 'aug_channel_jitter_max_delta', 1)
-    cj_p = getattr(args, 'aug_channel_jitter_p', 0.0)
+    # Channel jitter augmentation
+    cj_rate = args.aug_channel_jitter_rate
+    cj_k = args.aug_channel_jitter_max_delta
+    cj_p = args.aug_channel_jitter_p
 
-    sc_p = getattr(args, 'aug_timescale_p', 0.0)
-    sc_min = getattr(args, 'aug_timescale_min', 0.9)
-    sc_max = getattr(args, 'aug_timescale_max', 1.1)
+    # Time scale augmentation
+    sc_p = args.aug_timescale_p
+    sc_min = args.aug_timescale_min
+    sc_max = args.aug_timescale_max
 
-    norm_p = getattr(args, 'aug_norm_p', 0.0)
-    norm_tgt = getattr(args, 'aug_norm_target_total', None)
-    norm_up = getattr(args, 'aug_norm_allow_upsample', False)
-    norm_jt = getattr(args, 'aug_norm_jitter', 1)
+    # Spike count normalization
+    norm_p = args.aug_norm_p
+    norm_tgt = args.aug_norm_target_total
+    norm_up = args.aug_norm_allow_upsample
+    norm_jt = args.aug_norm_jitter
 
     ops = []
     if ts_max > 0 and ts_p > 0:
@@ -269,12 +272,14 @@ def _build_train_transform(args) -> Optional[Callable]:
     if sc_p > 0:
         ops.append(TimeScale(min_scale=float(sc_min), max_scale=float(sc_max), p=float(sc_p)))
     if norm_p > 0:
-        ops.append(NormalizeSpikeCount(
-            target_total=None if norm_tgt is None else int(norm_tgt),
-            allow_upsample=bool(norm_up),
-            jitter=int(norm_jt),
-            p=float(norm_p),
-        ))
+        ops.append(
+            NormalizeSpikeCount(
+                target_total=None if norm_tgt is None else int(norm_tgt),
+                allow_upsample=bool(norm_up),
+                jitter=int(norm_jt),
+                p=float(norm_p),
+            )
+        )
     return Compose(ops) if ops else None
 
 
@@ -282,10 +287,10 @@ def _make_collate(train_dataset: SpikingDataset, args, is_train: bool) -> Callab
     if not is_train or not args.use_augm:
         return train_dataset.generate_batch
 
-    # 默认开启：blend/mixup（同类混合）
-    mix_alpha = getattr(args, 'aug_blend_alpha', 0.2)  # Beta(0.2, 0.2)
-    mix_p = getattr(args, 'aug_blend_p', 1.0)  # 每个 batch 都混合
-    same_cls = getattr(args, 'aug_blend_same_class', True)  # 同类内配对
+    # Blend/mixup augmentation
+    mix_alpha = args.aug_blend_alpha
+    mix_p = args.aug_blend_p
+    same_cls = args.aug_blend_same_class
 
     if mix_alpha <= 0.0:
         return train_dataset.generate_batch
@@ -327,6 +332,126 @@ def _make_collate(train_dataset: SpikingDataset, args, is_train: bool) -> Callab
     return _collate
 
 
+def add_data_augment_args(parser: argparse.ArgumentParser):
+    args, _ = parser.parse_known_args()
+    if not args.use_augm:
+        return  # 已添加过
+    # General augmentation flag
+    parser.add_argument(
+        "--use_augm",
+        type=bool,
+        default=True,
+        help="Enable data augmentation during training"
+    )
+
+    # Time shift augmentation (default enabled)
+    parser.add_argument(
+        "--aug_shift_max",
+        type=int,
+        default=20,
+        help="Maximum shift in time steps for random time shift augmentation"
+    )
+    parser.add_argument(
+        "--aug_shift_p",
+        type=float,
+        default=1.0,
+        help="Probability of applying time shift augmentation per sample"
+    )
+    parser.add_argument(
+        "--aug_shift_mode",
+        type=str,
+        default="wrap",
+        choices=["wrap", "pad", "trim"],
+        help="Mode for time shift: 'wrap' (circular shift), 'pad' (zero pad), 'trim' (truncate and pad)"
+    )
+
+    # Channel jitter augmentation (default disabled)
+    parser.add_argument(
+        "--aug_channel_jitter_rate",
+        type=float,
+        default=0.0,
+        help="Rate of spikes to jitter across channels (0.0-1.0)"
+    )
+    parser.add_argument(
+        "--aug_channel_jitter_max_delta",
+        type=int,
+        default=1,
+        help="Maximum channel distance for jitter"
+    )
+    parser.add_argument(
+        "--aug_channel_jitter_p",
+        type=float,
+        default=0.0,
+        help="Probability of applying channel jitter per sample"
+    )
+
+    # Time scale augmentation (default disabled)
+    parser.add_argument(
+        "--aug_timescale_p",
+        type=float,
+        default=0.0,
+        help="Probability of applying time scale augmentation per sample"
+    )
+    parser.add_argument(
+        "--aug_timescale_min",
+        type=float,
+        default=0.9,
+        help="Minimum time scale factor"
+    )
+    parser.add_argument(
+        "--aug_timescale_max",
+        type=float,
+        default=1.1,
+        help="Maximum time scale factor"
+    )
+
+    # Spike count normalization (default disabled)
+    parser.add_argument(
+        "--aug_norm_p",
+        type=float,
+        default=0.0,
+        help="Probability of applying spike count normalization per sample"
+    )
+    parser.add_argument(
+        "--aug_norm_target_total",
+        type=int,
+        default=None,
+        help="Target total spike count for normalization (None to keep original)"
+    )
+    parser.add_argument(
+        "--aug_norm_allow_upsample",
+        type=bool,
+        default=False,
+        help="Allow upsampling when normalizing spike count"
+    )
+    parser.add_argument(
+        "--aug_norm_jitter",
+        type=int,
+        default=1,
+        help="Jitter amount for upsampled spikes"
+    )
+
+    # Blend/Mixup augmentation (default enabled)
+    parser.add_argument(
+        "--aug_blend_alpha",
+        type=float,
+        default=0.2,
+        help="Alpha parameter for Beta distribution in blend/mixup augmentation"
+    )
+    parser.add_argument(
+        "--aug_blend_p",
+        type=float,
+        default=1.0,
+        help="Probability of applying blend/mixup per batch"
+    )
+    parser.add_argument(
+        "--aug_blend_same_class",
+        type=bool,
+        default=True,
+        help="Whether to blend samples from the same class only"
+    )
+
+
 def load_shd_data(args):
     # 构建 per-sample transform（仅训练集）
     train_transform = _build_train_transform(args)
@@ -352,6 +477,8 @@ def load_shd_data(args):
         shuffle=False,
         num_workers=0 if platform.system() == 'Windows' else args.num_workers,
     )
+
+    import brainstate
     return brainstate.util.DotDict(
         {
             'train_loader': train_loader,
