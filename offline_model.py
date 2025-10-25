@@ -249,6 +249,7 @@ class LIFLayer(BaseLayer):
         self.hidden_size = int(hidden_size)
         self.use_bias = use_bias
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
+        self.alpha_lim = [np.exp(-1 / 20), np.exp(-1 / 200)]
         super().__init__(args=args)
 
         # Trainable parameters
