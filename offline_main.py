@@ -17,7 +17,7 @@ import os
 import platform
 
 from general_utils import MyArgumentParser
-from spiking_datasets_augv2 import add_data_augment_args
+from spiking_datasets_augv3 import add_data_augment_args
 
 
 def strtobool(val):
