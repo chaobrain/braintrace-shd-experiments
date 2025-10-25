@@ -32,7 +32,7 @@ from brainstate.typing import ArrayLike
 
 from general_utils import setup_logging, load_model_states, save_model_states
 from init import KaimingUniform, Orthogonal
-from spiking_datasets_augv2 import load_shd_data
+from spiking_datasets_augv3 import load_shd_data
 
 
 def print_model_options(logger, args):
@@ -846,7 +846,7 @@ class Experiment(brainstate.util.PrettyObject):
         self.train_loader = results['train_loader']
         self.valid_loader = results['test_loader']
         if self.use_augm:
-            self.logger.warning("\nWarning: Data augmentation not implemented for SHD and SSC.\n")
+            self.logger.warning("\nEventProp-style data augmentation enabled for SHD.\n")
 
     def init_model(self):
         """
@@ -879,6 +879,10 @@ class Experiment(brainstate.util.PrettyObject):
         """
         start = time.time()
         losses, accs = [], []
+
+        train_dataset = getattr(self.train_loader, "dataset", None)
+        if train_dataset is not None and hasattr(train_dataset, "refresh_epoch"):
+            train_dataset.refresh_epoch(epoch_seed=e)
 
         # Loop over batches from train set
         for step, (x, y) in enumerate(self.train_loader):
