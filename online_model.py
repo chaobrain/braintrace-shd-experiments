@@ -59,7 +59,6 @@ def print_training_options(logger, args):
         ---------------
         Load experiment folder: {load_exp_folder}
         New experiment folder: {new_exp_folder}
-        Data folder: {data_folder}
         Save best model: {save_best}
         Batch size: {batch_size}
         Number of epochs: {nb_epochs}
@@ -214,6 +213,65 @@ class BatchNorm0d(brainstate.nn.Module):
         self.running_var.value = self.momentum * self.running_var.value + (1 - self.momentum) * var
 
 
+class DyT(brainstate.nn.Module):
+    def __init__(self, num_features, alpha_init_value=0.5):
+        super().__init__()
+        self.param = brainstate.ParamState(
+            {
+                'alpha': jnp.ones(1) * alpha_init_value,
+                'weight': jnp.ones(num_features),
+                'bias': jnp.zeros(num_features),
+            }
+        )
+
+    def update(self, x):
+        # jax.debug.print('x pre min = {min}, max = {max}', min=x.min(), max=x.max())
+        x = jnp.tanh(self.param.value['alpha'] * x)
+        # jax.debug.print('x post min = {min}, max = {max}', min=x.min(), max=x.max())
+        return x * self.param.value['weight'] + self.param.value['bias']
+
+
+class Linear(brainstate.nn.Module):
+    def __init__(
+        self,
+        in_size: Union[int, Sequence[int]],
+        out_size: Union[int, Sequence[int]],
+        w_init: Union[Callable, ArrayLike] = KaimingUniform(),
+        b_init: Optional[Union[Callable, ArrayLike]] = braintools.init.ZeroInit(),
+        w_mask: Optional[Union[ArrayLike, Callable]] = None,
+        name: Optional[str] = None,
+        param_type: type = brainscale.ETraceParam,
+        weight_norm: bool = False,
+    ):
+        super().__init__(name=name)
+
+        # input and output shape
+        self.in_size = in_size
+        self.out_size = out_size
+
+        # w_mask
+        w_shape = (self.in_size[-1], self.out_size[-1])
+        b_shape = (self.out_size[-1],)
+        self.w_mask = braintools.init.param(w_mask, w_shape)
+
+        # weights
+        params = dict(weight=braintools.init.param(w_init, w_shape, allow_none=False))
+        if b_init is not None:
+            params['bias'] = braintools.init.param(b_init, b_shape, allow_none=False)
+
+        # weight + op
+        if weight_norm:
+            weight_fn = brainstate.nn.weight_standardization
+        else:
+            weight_fn = lambda x: x
+        self.weight_op = param_type(
+            params, op=brainscale.MatMulOp(self.w_mask, weight_fn=weight_fn)
+        )
+
+    def update(self, x):
+        return self.weight_op.execute(x)
+
+
 class SNN(brainstate.nn.Module):
     def __init__(
         self,
@@ -296,31 +354,11 @@ class SNNExtractSpikes(brainstate.nn.Module):
         return outs
 
 
-class DyT(brainstate.nn.Module):
-    def __init__(self, num_features, alpha_init_value=0.5):
-        super().__init__()
-        self.param = brainstate.ParamState(
-            {
-                'alpha': jnp.ones(1) * alpha_init_value,
-                'weight': jnp.ones(num_features),
-                'bias': jnp.zeros(num_features),
-            }
-        )
-
-    def update(self, x):
-        # jax.debug.print('x pre min = {min}, max = {max}', min=x.min(), max=x.max())
-        x = jnp.tanh(self.param.value['alpha'] * x)
-        # jax.debug.print('x post min = {min}, max = {max}', min=x.min(), max=x.max())
-        return x * self.param.value['weight'] + self.param.value['bias']
-
-
 class BaseLayer(brainstate.nn.Module):
     def __init__(self, args):
         super().__init__()
 
         self.args = args
-
-        # Initialize normalization
         self.normalize = False
         if args.normalization == "layernorm":
             # self.norm = brainscale.nn.LayerNorm(self.hidden_size, param_type=brainstate.FakeState)
@@ -355,47 +393,6 @@ class BaseLayer(brainstate.nn.Module):
         return x
 
 
-class Linear(brainstate.nn.Module):
-    def __init__(
-        self,
-        in_size: Union[int, Sequence[int]],
-        out_size: Union[int, Sequence[int]],
-        w_init: Union[Callable, ArrayLike] = KaimingUniform(),
-        b_init: Optional[Union[Callable, ArrayLike]] = braintools.init.ZeroInit(),
-        w_mask: Optional[Union[ArrayLike, Callable]] = None,
-        name: Optional[str] = None,
-        param_type: type = brainscale.ETraceParam,
-        weight_norm: bool = False,
-    ):
-        super().__init__(name=name)
-
-        # input and output shape
-        self.in_size = in_size
-        self.out_size = out_size
-
-        # w_mask
-        w_shape = (self.in_size[-1], self.out_size[-1])
-        b_shape = (self.out_size[-1],)
-        self.w_mask = braintools.init.param(w_mask, w_shape)
-
-        # weights
-        params = dict(weight=braintools.init.param(w_init, w_shape, allow_none=False))
-        if b_init is not None:
-            params['bias'] = braintools.init.param(b_init, b_shape, allow_none=False)
-
-        # weight + op
-        if weight_norm:
-            weight_fn = brainstate.nn.weight_standardization
-        else:
-            weight_fn = lambda x: x
-        self.weight_op = param_type(
-            params, op=brainscale.MatMulOp(self.w_mask, weight_fn=weight_fn)
-        )
-
-    def update(self, x):
-        return self.weight_op.execute(x)
-
-
 class LIFLayer(BaseLayer):
     def __init__(
         self,
@@ -417,7 +414,7 @@ class LIFLayer(BaseLayer):
             self.hidden_size,
             w_init=KaimingUniform(args.inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
-            weight_norm=args.normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm'
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -471,6 +468,7 @@ class adLIFLayer(BaseLayer):
         args: brainstate.util.DotDict,
         use_bias: bool = False,
     ):
+
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
@@ -490,7 +488,7 @@ class adLIFLayer(BaseLayer):
             self.hidden_size,
             w_init=KaimingUniform(args.inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
-            weight_norm=args.normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm'
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -577,7 +575,7 @@ class RLIFLayer(BaseLayer):
             self.hidden_size,
             w_init=KaimingUniform(args.inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
-            weight_norm=args.normalization == 'weightnorm',
+            weight_norm=args.normalization == 'weightnorm'
         )
         # Set diagonal elements of recurrent matrix to zero
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
@@ -743,7 +741,6 @@ class ReadoutLayer(BaseLayer):
         args: brainstate.util.DotDict,
         use_bias: bool = False,
     ):
-        # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
         self.use_bias = use_bias
@@ -810,7 +807,6 @@ class Experiment(brainstate.util.PrettyObject):
         # Training config
         self.load_exp_folder = args.load_exp_folder
         self.new_exp_folder = args.new_exp_folder
-        self.data_folder = args.data_folder
         self.save_best = args.save_best
         self.batch_size = args.batch_size
         self.nb_epochs = args.nb_epochs
@@ -921,6 +917,8 @@ class Experiment(brainstate.util.PrettyObject):
         return braintools.metric.softmax_cross_entropy_with_integer_labels(predictions, targets).mean()
 
     def _acc(self, predictions, target):
+        if target.ndim == 2:
+            return jnp.mean(jnp.equal(jnp.argmax(target, axis=1), jnp.argmax(predictions, axis=1)))
         return jnp.mean(jnp.equal(target, jnp.argmax(predictions, axis=1)))
 
     def _process_input(self, inputs):
@@ -937,11 +935,7 @@ class Experiment(brainstate.util.PrettyObject):
 
         # assume the inputs have shape (time, batch, features, ...)
         n_time, n_batch = inputs.shape[:2]
-        brainstate.nn.vmap_init_all_states(
-            model,
-            state_tag='hidden',
-            axis_size=n_batch,
-        )
+        brainstate.nn.vmap_init_all_states(model, state_tag='hidden', axis_size=n_batch)
         model = brainstate.nn.Vmap(
             model,
             vmap_states='hidden',
@@ -955,40 +949,6 @@ class Experiment(brainstate.util.PrettyObject):
 
         # loss
         loss = self._loss(outs, targets)
-
-        # accuracy
-        acc = self._acc(outs, targets)
-        return acc, loss
-
-    @brainstate.transform.jit(static_argnums=0)
-    def bptt_train(self, inputs, targets):
-        inputs = self._process_input(inputs)
-
-        brainstate.nn.vmap_init_all_states(self.net, state_tag='hidden', axis_size=inputs.shape[1])
-        model = brainstate.nn.EnvironContext(self.net, fit=True)
-        model = brainstate.nn.Vmap(
-            model,
-            vmap_states='hidden',
-            axis_name='batch' if self.normalization == 'batchnorm' else None
-        )
-
-        def _bptt_grad_step():
-            outs = brainstate.transform.for_loop(model, inputs)
-            outs = outs.sum(axis=0)
-            # outs = outs[-1]
-            loss = self._loss(outs, targets)
-            return loss, outs
-
-        # gradients
-        grads, loss, outs = brainstate.transform.grad(
-            _bptt_grad_step,
-            self.trainable_weights,
-            has_aux=True,
-            return_value=True
-        )()
-
-        # optimization
-        self.optimizer.update(grads)
 
         # accuracy
         acc = self._acc(outs, targets)
@@ -1122,10 +1082,11 @@ class Experiment(brainstate.util.PrettyObject):
 
         self.nb_inputs = results['in_shape']
         self.nb_outputs = results['out_shape']
+
         self.train_loader = results['train_loader']
         self.valid_loader = results['test_loader']
         if self.use_augm:
-            self.logger.warning("\nWarning: Data augmentation not implemented for SHD and SSC.\n")
+            self.logger.warning("\nEventProp-style data augmentation enabled for SHD.\n")
 
     def init_model(self):
         """
@@ -1143,7 +1104,6 @@ class Experiment(brainstate.util.PrettyObject):
                 use_bias=self.use_bias,
                 use_readout_layer=True,
             )
-            # self.logger.warning(f"\nCreated new spiking model:\n {self.net}\n")
 
         else:
             raise ValueError(f"Invalid model type {self.net_type}")
@@ -1159,15 +1119,17 @@ class Experiment(brainstate.util.PrettyObject):
         start = time.time()
         losses, accs = [], []
 
+        train_dataset = getattr(self.train_loader, "dataset", None)
+        if train_dataset is not None and hasattr(train_dataset, "refresh_epoch") and self.args.use_augm:
+            if e % self.args.aug_step_freq == 0:
+                train_dataset.refresh_epoch(epoch_seed=e)
+
         # Loop over batches from train set
         for step, (x, y) in enumerate(self.train_loader):
             # Forward pass through network
             x = jnp.asarray(x)  # images:[bs, 1, 28, 28]
             y = jnp.asarray(y)
-            if self.args.method == 'bptt':
-                acc, loss = self.bptt_train(x, y)
-            else:
-                acc, loss = self.online_train(x, y)
+            acc, loss = self.online_train(x, y)
             losses.append(loss)
             accs.append(acc)
 
@@ -1262,8 +1224,3 @@ class Experiment(brainstate.util.PrettyObject):
         self.logger.warning(f"Test acc={test_acc}")
 
         self.logger.warning("\n-----------------------------\n")
-
-
-if __name__ == '__main__':
-    d = DyT(10)
-    print(d)

@@ -278,8 +278,8 @@ class LIFLayer(BaseLayer):
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
         if self.args.state_init == 'zero':
-            self.ut = brainstate.HiddenState(jnp.zeros(*size))
-            self.st = brainstate.HiddenState(jnp.zeros(*size))
+            self.ut = brainstate.HiddenState(jnp.zeros(size))
+            self.st = brainstate.HiddenState(jnp.zeros(size))
         elif self.args.state_init == 'rand':
             self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
             self.st = brainstate.HiddenState(brainstate.random.rand(*size))
@@ -356,9 +356,9 @@ class adLIFLayer(BaseLayer):
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
         if self.args.state_init == 'zero':
-            self.ut = brainstate.HiddenState(jnp.zeros(*size))
-            self.wt = brainstate.HiddenState(jnp.zeros(*size))
-            self.st = brainstate.HiddenState(jnp.zeros(*size))
+            self.ut = brainstate.HiddenState(jnp.zeros(size))
+            self.wt = brainstate.HiddenState(jnp.zeros(size))
+            self.st = brainstate.HiddenState(jnp.zeros(size))
 
         elif self.args.state_init == 'rand':
             self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
@@ -440,8 +440,8 @@ class RLIFLayer(BaseLayer):
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
         if self.args.state_init == 'zero':
-            self.ut = brainstate.HiddenState(jnp.zeros(*size))
-            self.st = brainstate.HiddenState(jnp.zeros(*size))
+            self.ut = brainstate.HiddenState(jnp.zeros(size))
+            self.st = brainstate.HiddenState(jnp.zeros(size))
         elif self.args.state_init == 'rand':
             self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
             self.st = brainstate.HiddenState(brainstate.random.rand(*size))
@@ -529,9 +529,9 @@ class RadLIFLayer(BaseLayer):
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
         if self.args.state_init == 'zero':
-            self.ut = brainstate.HiddenState(jnp.zeros(*size))
-            self.wt = brainstate.HiddenState(jnp.zeros(*size))
-            self.st = brainstate.HiddenState(jnp.zeros(*size))
+            self.ut = brainstate.HiddenState(jnp.zeros(size))
+            self.wt = brainstate.HiddenState(jnp.zeros(size))
+            self.st = brainstate.HiddenState(jnp.zeros(size))
         elif self.args.state_init == 'rand':
             self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
             self.wt = brainstate.HiddenState(brainstate.random.rand(*size))
@@ -659,14 +659,18 @@ class Experiment(brainstate.util.PrettyObject):
         specified by the class initialization.
         """
         # Initialize best accuracy
-        best_epoch, best_acc = 0, 0
+        best_epoch, best_acc, patience_counter = 0, 0, 0
 
         # Loop over epochs (training + validation)
         self.logger.warning("\n------ Begin training ------\n")
         for e in range(best_epoch + 1, best_epoch + self.nb_epochs + 1):
-            self.train_one_epoch(e)
-            best_epoch, best_acc = self.valid_one_epoch(e, best_epoch, best_acc)
+            train_acc = self.train_one_epoch(e)
+            best_epoch, best_acc, patience_counter = self.valid_one_epoch(e, best_epoch, best_acc, patience_counter)
             self.optimizer.lr.step_epoch()
+            if patience_counter >= self.args.patience and train_acc > self.args.train_threshold:
+                self.logger.warning(f"Early stopping at epoch {e}!")
+                break
+
         self.logger.warning(f"\nBest valid acc at epoch {best_epoch}: {best_acc}\n")
         self.logger.warning("\n------ Training finished ------\n")
 
@@ -794,10 +798,7 @@ class Experiment(brainstate.util.PrettyObject):
         """
 
         # Use given path for new model folder
-        if self.new_exp_folder is not None:
-            exp_folder = self.new_exp_folder
-        else:
-            exp_folder = '.'
+        exp_folder = self.new_exp_folder if self.new_exp_folder is not None else './'
         # Generate a path for new model from chosen config
         if self.args.method == 'esd-rtrl':
             outname = f'{exp_folder}/{self.args.method}_{self.args.etrace_decay}/'
@@ -811,8 +812,7 @@ class Experiment(brainstate.util.PrettyObject):
         exp_folder = f"{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}/"
 
         # For a new model check that out path does not exist
-        if os.path.exists(exp_folder):
-            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), exp_folder)
+        os.makedirs(exp_folder, exist_ok=True)
 
         # Create folders to store experiment
         self.log_dir = exp_folder
@@ -855,7 +855,6 @@ class Experiment(brainstate.util.PrettyObject):
                 use_bias=self.use_bias,
                 use_readout_layer=True,
             )
-            self.logger.warning(f"\nCreated new spiking model:\n {self.net}\n")
 
         else:
             raise ValueError(f"Invalid model type {self.net_type}")
@@ -872,7 +871,7 @@ class Experiment(brainstate.util.PrettyObject):
         losses, accs = [], []
 
         train_dataset = getattr(self.train_loader, "dataset", None)
-        if train_dataset is not None and hasattr(train_dataset, "refresh_epoch"):
+        if train_dataset is not None and hasattr(train_dataset, "refresh_epoch") and self.args.use_augm:
             if e % self.args.aug_step_freq == 0:
                 train_dataset.refresh_epoch(epoch_seed=e)
 
@@ -881,9 +880,6 @@ class Experiment(brainstate.util.PrettyObject):
             # Forward pass through network
             x = jnp.asarray(x)  # images:[bs, 1, 28, 28]
             y = jnp.asarray(y)
-            # print(
-            #     x.shape, y.shape
-            # )
             acc, loss = self.bptt_train(x, y)
             losses.append(loss)
             accs.append(acc)
@@ -903,8 +899,9 @@ class Experiment(brainstate.util.PrettyObject):
         end = time.time()
         elapsed = str(timedelta(seconds=end - start))
         self.logger.warning(f"Epoch {e}: train elapsed time={elapsed}")
+        return train_acc
 
-    def valid_one_epoch(self, e, best_epoch, best_acc):
+    def valid_one_epoch(self, e, best_epoch, best_acc, patience_counter):
         """
         This function tests the model with a single pass over the
         validation split of the dataset.
@@ -928,23 +925,27 @@ class Experiment(brainstate.util.PrettyObject):
         valid_acc = np.mean(accs)
         self.logger.warning(f"Epoch {e}: valid acc={valid_acc}")
 
-        # # Update learning rate
-        # self.scheduler.step(valid_acc)
-
         # Update the best epoch and accuracy
         if valid_acc > best_acc:
             best_acc = valid_acc
             best_epoch = e
+            patience_counter = 0
+            self.logger.warning('New best model found!')
 
             # Save best model
             if self.save_best:
                 save_model_states(
                     f"{self.checkpoint_dir}/best_model.pth", self.net, valid_acc=best_acc, epoch=best_epoch)
                 self.logger.warning(f"\nBest model saved with valid acc={valid_acc}")
+        else:
+            self.logger.warning('No improvement.')
+            patience_counter += 1
+            if patience_counter % self.args.patience == self.args.patience // 2:
+                self.logger.warning('Learning rate reduced by a factor of 0.2 due to lack of improvement.')
 
         self.logger.warning("\n-----------------------------\n")
 
-        return best_epoch, best_acc
+        return best_epoch, best_acc, patience_counter
 
     def test_one_epoch(self, test_loader):
         """
