@@ -298,3 +298,35 @@ def raster_plot(
 
     if show:
         plt.show()
+
+
+def copy_source(log_dir):
+    print('copying source files to log directory...')
+    # copy source files
+    try:
+        # Source root: directory containing this file (project root)
+        src_root = os.path.dirname(os.path.abspath(__file__))
+
+        # Destination base for source copy
+        dest_root = os.path.abspath(os.path.join(log_dir, 'src'))
+        os.makedirs(dest_root, exist_ok=True)
+        for fname in os.listdir(src_root):
+            if not fname.endswith('.py'):
+                continue
+            try:
+                src_file = os.path.join(src_root, fname)
+                dst_file = os.path.join(dest_root, fname)
+                shutil.copy2(src_file, dst_file)
+            except:
+                # Don't fail the whole init if a single file can't be copied.
+                pass
+    except:
+        # If copying fails for any reason, continue without blocking the experiment creation.
+        pass
+    print('source files copied.')
+
+
+if __name__ == '__main__':
+    copy_source('./log_test')
+
+

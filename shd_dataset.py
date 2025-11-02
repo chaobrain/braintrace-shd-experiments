@@ -9,8 +9,6 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 
-import brainstate
-
 __all__ = [
     "load_shd_data",
     "add_data_augment_args",
@@ -28,13 +26,15 @@ class AugmentationConfig:
     seed: Optional[int] = None
 
     def enabled(self) -> bool:
-        return any([
-            self.random_shift is not None,
-            self.random_dilate is not None,
-            self.id_jitter is not None,
-            self.blend_probs is not None,
-            self.normalise_spike_number,
-        ])
+        return any(
+            [
+                self.random_shift is not None,
+                self.random_dilate is not None,
+                self.id_jitter is not None,
+                self.blend_probs is not None,
+                self.normalise_spike_number,
+            ]
+        )
 
 
 def _copy_events(events: Sequence[Dict[str, np.ndarray]]) -> List[Dict[str, np.ndarray]]:
@@ -47,7 +47,10 @@ def _copy_events(events: Sequence[Dict[str, np.ndarray]]) -> List[Dict[str, np.n
     ]
 
 
-def normalise_spike_number(events: List[Dict[str, np.ndarray]], rng: np.random.Generator) -> List[Dict[str, np.ndarray]]:
+def normalise_spike_number(
+    events: List[Dict[str, np.ndarray]],
+    rng: np.random.Generator
+) -> List[Dict[str, np.ndarray]]:
     if not events:
         return []
 
@@ -190,8 +193,10 @@ def blend_dataset(
     labels_array = np.array(labels, dtype=np.int64)
     n_current = len(events_array)
     if target_size <= n_current:
+        print('No blending needed, current size', n_current, '>= target size', target_size)
         return list(events_array), labels_array.tolist()
 
+    print('Blending dataset from size', n_current, 'to', target_size)
     new_events: List[Dict[str, np.ndarray]] = []
     new_labels: List[int] = []
     for _ in range(target_size - n_current):
@@ -401,6 +406,7 @@ def load_shd_data(args):
         num_workers=0 if platform.system() == "Windows" else args.num_workers,
     )
 
+    import brainstate
     return brainstate.util.DotDict(
         {
             "train_loader": train_loader,
@@ -413,50 +419,59 @@ def load_shd_data(args):
 
 
 def add_data_augment_args(parser):
-    parser.add_argument(
-        "--aug_random_shift",
-        type=int,
-        default=None,
-        help="Maximum absolute channel shift (integer).",
-    )
-    parser.add_argument(
-        "--aug_random_dilate_min",
-        type=float,
-        default=None,
-        help="Minimum dilation factor for random_dilate (exclusive use when both min and max provided).",
-    )
-    parser.add_argument(
-        "--aug_random_dilate_max",
-        type=float,
-        default=None,
-        help="Maximum dilation factor for random_dilate.",
-    )
-    parser.add_argument(
-        "--aug_id_jitter_sigma",
-        type=float,
-        default=None,
-        help="Standard deviation for neuron ID jittering.",
-    )
-    parser.add_argument(
-        "--aug_blend_probs",
-        type=lambda s: [float(x) for x in s.split(",") if x],
-        default=None,
-        help="Comma separated probabilities for blend augmentation.",
-    )
-    parser.add_argument(
-        "--aug_target_size",
-        type=int,
-        default=None,
-        help="Target dataset size after blend augmentation.",
-    )
-    parser.add_argument(
-        "--aug_normalise_spike_num",
-        action="store_true",
-        help="Enable spike count normalisation before augmentations.",
-    )
-    parser.add_argument(
-        "--aug_seed",
-        type=int,
-        default=None,
-        help="Base random seed for augmentation pipeline.",
-    )
+    args, _ = parser.parse_known_args()
+    if args.use_augm:
+        parser.add_argument(
+            "--aug_random_shift",
+            type=int,
+            default=None,
+            help="Maximum absolute channel shift (integer).",
+        )
+        parser.add_argument(
+            "--aug_random_dilate_min",
+            type=float,
+            default=None,
+            help="Minimum dilation factor for random_dilate (exclusive use when both min and max provided).",
+        )
+        parser.add_argument(
+            "--aug_random_dilate_max",
+            type=float,
+            default=None,
+            help="Maximum dilation factor for random_dilate.",
+        )
+        parser.add_argument(
+            "--aug_id_jitter_sigma",
+            type=float,
+            default=None,
+            help="Standard deviation for neuron ID jittering.",
+        )
+        parser.add_argument(
+            "--aug_blend_probs",
+            type=lambda s: [float(x) for x in s.split(",") if x],
+            default=None,
+            help="Comma separated probabilities for blend augmentation.",
+        )
+        parser.add_argument(
+            "--aug_target_size",
+            type=int,
+            default=None,
+            help="Target dataset size after blend augmentation.",
+        )
+        parser.add_argument(
+            "--aug_step_freq",
+            type=int,
+            default=1,
+            help="Target dataset size after blend augmentation.",
+        )
+        parser.add_argument(
+            "--aug_normalise_spike_num",
+            action="store_true",
+            help="Enable spike count normalisation before augmentations.",
+        )
+        parser.add_argument(
+            "--aug_seed",
+            type=int,
+            default=None,
+            help="Base random seed for augmentation pipeline.",
+        )
+    return parser

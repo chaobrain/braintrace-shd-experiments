@@ -30,9 +30,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from brainstate.typing import ArrayLike
 
-from general_utils import setup_logging, load_model_states, save_model_states
+from general_utils import setup_logging, load_model_states, save_model_states, copy_source
 from init import KaimingUniform, Orthogonal
-from spiking_datasets_augv3 import load_shd_data
+from shd_dataset import load_shd_data
 
 
 def print_model_options(logger, args):
@@ -266,7 +266,7 @@ class LIFLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         Wx = self.W(x)
@@ -344,7 +344,7 @@ class adLIFLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         Wx = self.W(x)
@@ -428,7 +428,7 @@ class RLIFLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         Wx = self.W(x)
@@ -517,7 +517,7 @@ class RadLIFLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         Wx = self.W(x)
@@ -585,7 +585,7 @@ class ReadoutLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         Wx = self.W(x)
@@ -607,14 +607,6 @@ class ReadoutLayer(BaseLayer):
         return ut
         # out = self.out.value + brainstate.functional.softmax(ut)
         # return out
-
-
-import optax
-
-
-def ce_with_optax(logits: jnp.ndarray, targets: jnp.ndarray) -> jnp.ndarray:
-    # targets: [B,K] soft；若是硬标签，先 one_hot 再传入
-    return jnp.mean(optax.softmax_cross_entropy(logits, targets))
 
 
 class Experiment(brainstate.util.PrettyObject):
@@ -649,6 +641,7 @@ class Experiment(brainstate.util.PrettyObject):
         self.logger = setup_logging(os.path.join(self.log_dir, 'exp.log'))
         print_model_options(self.logger, args)
         print_training_options(self.logger, args)
+        copy_source(self.log_dir)
 
         # Initialize dataloaders and model
         self.init_dataset()
@@ -734,10 +727,7 @@ class Experiment(brainstate.util.PrettyObject):
         return outs
 
     def _loss(self, predictions, targets):
-        if targets.ndim == 2:
-            return ce_with_optax(predictions, targets)
-        else:
-            return braintools.metric.softmax_cross_entropy_with_integer_labels(predictions, targets).mean()
+        return braintools.metric.softmax_cross_entropy_with_integer_labels(predictions, targets).mean()
 
     def _acc(self, predictions, target):
         if target.ndim == 2:
@@ -832,6 +822,7 @@ class Experiment(brainstate.util.PrettyObject):
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
+
         self.exp_folder = exp_folder
 
     def init_dataset(self):
@@ -882,13 +873,17 @@ class Experiment(brainstate.util.PrettyObject):
 
         train_dataset = getattr(self.train_loader, "dataset", None)
         if train_dataset is not None and hasattr(train_dataset, "refresh_epoch"):
-            train_dataset.refresh_epoch(epoch_seed=e)
+            if e % self.args.aug_step_freq == 0:
+                train_dataset.refresh_epoch(epoch_seed=e)
 
         # Loop over batches from train set
         for step, (x, y) in enumerate(self.train_loader):
             # Forward pass through network
             x = jnp.asarray(x)  # images:[bs, 1, 28, 28]
             y = jnp.asarray(y)
+            # print(
+            #     x.shape, y.shape
+            # )
             acc, loss = self.bptt_train(x, y)
             losses.append(loss)
             accs.append(acc)

@@ -9,7 +9,7 @@
 
 pip install BrainX[cuda12]==2025.10.20
 pip install BrainX[cuda13]==2025.10.20
-pip install h5py matplotlib msgpack tonic prettytable
+pip install h5py matplotlib msgpack prettytable tonic 
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 ```

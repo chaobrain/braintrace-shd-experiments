@@ -31,9 +31,9 @@ import numpy as np
 from brainstate.nn._normalizations import _canonicalize_axes, _compute_stats, _normalize, NormalizationParamState
 from brainstate.typing import ArrayLike
 
-from general_utils import setup_logging, load_model_states, save_model_states
+from general_utils import setup_logging, load_model_states, save_model_states, copy_source
 from init import KaimingUniform, Orthogonal
-from spiking_datasets_aug import load_shd_data
+from shd_dataset import load_shd_data
 
 
 def print_model_options(logger, args):
@@ -227,12 +227,12 @@ class SNN(brainstate.nn.Module):
         super().__init__()
 
         # Fixed parameters
+        self.args = args
         self.input_size = input_shape
         self.layer_sizes = layer_sizes
         self.num_layers = len(layer_sizes)
         self.num_outputs = layer_sizes[-1]
         self.neuron_type = neuron_type
-        self.args = args
         self.use_bias = use_bias
         self.use_readout_layer = use_readout_layer
 
@@ -289,11 +289,7 @@ class SNNExtractSpikes(brainstate.nn.Module):
 
     def update(self, x):
         outs = []
-        layers = (
-            self.net.snn[:-1]
-            if self.net.use_readout_layer else
-            self.net.snn
-        )
+        layers = self.net.snn[:-1] if self.net.use_readout_layer else self.net.snn
         for layer in layers:
             x = layer(x)
             outs.append(x)
@@ -316,19 +312,6 @@ class DyT(brainstate.nn.Module):
         x = jnp.tanh(self.param.value['alpha'] * x)
         # jax.debug.print('x post min = {min}, max = {max}', min=x.min(), max=x.max())
         return x * self.param.value['weight'] + self.param.value['bias']
-
-
-class FakeState:
-    def __init__(self, value):
-        self.value = value
-
-    def execute(self, x):
-        param = self.value
-        if 'scale' in param:
-            x = x * param['scale']
-        if 'bias' in param:
-            x = x + param['bias']
-        return x
 
 
 class BaseLayer(brainstate.nn.Module):
@@ -421,9 +404,6 @@ class LIFLayer(BaseLayer):
         args: brainstate.util.DotDict,
         use_bias: bool = False,
     ):
-        super().__init__(args)
-
-        # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
         self.use_bias = use_bias
@@ -444,7 +424,8 @@ class LIFLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.DropoutFixed(self.hidden_size, 1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -460,8 +441,8 @@ class LIFLayer(BaseLayer):
     def init_state(self, batch_size=None, *args, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
         if self.args.state_init == 'zero':
-            self.ut = brainstate.HiddenState(jnp.zeros(*size))
-            self.st = brainstate.HiddenState(jnp.zeros(*size))
+            self.ut = brainstate.HiddenState(jnp.zeros(size))
+            self.st = brainstate.HiddenState(jnp.zeros(size))
         elif self.args.state_init == 'rand':
             self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
             self.st = brainstate.HiddenState(brainstate.random.rand(*size))
@@ -490,17 +471,17 @@ class adLIFLayer(BaseLayer):
         args: brainstate.util.DotDict,
         use_bias: bool = False,
     ):
-        super().__init__(args)
-
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
+
+        super().__init__(args=args)
+
         self.use_bias = use_bias
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
         self.beta_lim = [np.exp(-1 / 30), np.exp(-1 / 120)]
         self.a_lim = [-1.0, 1.0]
         self.b_lim = [0.0, 2.0]
-        super().__init__(args=args)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
@@ -525,7 +506,8 @@ class adLIFLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.DropoutFixed(self.hidden_size, 1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -541,9 +523,9 @@ class adLIFLayer(BaseLayer):
     def init_state(self, batch_size=None, *args, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
         if self.args.state_init == 'zero':
-            self.ut = brainstate.HiddenState(jnp.zeros(*size))
-            self.wt = brainstate.HiddenState(jnp.zeros(*size))
-            self.st = brainstate.HiddenState(jnp.zeros(*size))
+            self.ut = brainstate.HiddenState(jnp.zeros(size))
+            self.wt = brainstate.HiddenState(jnp.zeros(size))
+            self.st = brainstate.HiddenState(jnp.zeros(size))
 
         elif self.args.state_init == 'rand':
             self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
@@ -613,7 +595,8 @@ class RLIFLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.DropoutFixed(self.hidden_size, 1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -629,8 +612,8 @@ class RLIFLayer(BaseLayer):
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
         if self.args.state_init == 'zero':
-            self.ut = brainstate.HiddenState(jnp.zeros(*size))
-            self.st = brainstate.HiddenState(jnp.zeros(*size))
+            self.ut = brainstate.HiddenState(jnp.zeros(size))
+            self.st = brainstate.HiddenState(jnp.zeros(size))
         elif self.args.state_init == 'rand':
             self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
             self.st = brainstate.HiddenState(brainstate.random.rand(*size))
@@ -687,7 +670,7 @@ class RadLIFLayer(BaseLayer):
             self.hidden_size,
             w_init=Orthogonal(args.rec_scale),
             b_init=None,
-            # w_mask=w_mask
+            w_mask=w_mask,
             weight_norm=args.normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -704,7 +687,8 @@ class RadLIFLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.DropoutFixed(self.hidden_size, 1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -721,9 +705,9 @@ class RadLIFLayer(BaseLayer):
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
         if self.args.state_init == 'zero':
-            self.ut = brainstate.HiddenState(jnp.zeros(*size))
-            self.wt = brainstate.HiddenState(jnp.zeros(*size))
-            self.st = brainstate.HiddenState(jnp.zeros(*size))
+            self.ut = brainstate.HiddenState(jnp.zeros(size))
+            self.wt = brainstate.HiddenState(jnp.zeros(size))
+            self.st = brainstate.HiddenState(jnp.zeros(size))
         elif self.args.state_init == 'rand':
             self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
             self.wt = brainstate.HiddenState(brainstate.random.rand(*size))
@@ -779,7 +763,8 @@ class ReadoutLayer(BaseLayer):
         )
 
         # Initialize dropout
-        self.drop = brainscale.nn.Dropout(1 - args.pdrop)
+        self.drop = brainstate.nn.DropoutFixed(self.hidden_size, 1 - args.pdrop)
+        self.drop = brainstate.nn.Dropout(1 - args.pdrop)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
@@ -838,6 +823,7 @@ class Experiment(brainstate.util.PrettyObject):
         self.logger = setup_logging(os.path.join(self.log_dir, 'exp.log'))
         print_model_options(self.logger, args)
         print_training_options(self.logger, args)
+        copy_source(self.log_dir)
 
         # Initialize dataloaders and model
         self.init_dataset()
@@ -855,14 +841,18 @@ class Experiment(brainstate.util.PrettyObject):
         specified by the class initialization.
         """
         # Initialize best accuracy
-        best_epoch, best_acc = 0, 0
+        best_epoch, best_acc, patience_counter = 0, 0, 0
 
         # Loop over epochs (training + validation)
         self.logger.warning("\n------ Begin training ------\n")
         for e in range(best_epoch + 1, best_epoch + self.nb_epochs + 1):
-            self.train_one_epoch(e)
-            best_epoch, best_acc = self.valid_one_epoch(e, best_epoch, best_acc)
+            train_acc = self.train_one_epoch(e)
+            best_epoch, best_acc, patience_counter = self.valid_one_epoch(e, best_epoch, best_acc, patience_counter)
             self.optimizer.lr.step_epoch()
+            if patience_counter >= self.args.patience and train_acc > self.args.train_threshold:
+                self.logger.warning(f"Early stopping at epoch {e}!")
+                break
+
         self.logger.warning(f"\nBest valid acc at epoch {best_epoch}: {best_acc}\n")
         self.logger.warning("\n------ Training finished ------\n")
 
@@ -897,7 +887,6 @@ class Experiment(brainstate.util.PrettyObject):
         for _ in range(5):
             x, y = next(data)
             x = jnp.asarray(x)
-            print(x.shape)
             outs = jax.tree.map(np.asarray, self._validate(x))
 
             # visualization
@@ -915,23 +904,13 @@ class Experiment(brainstate.util.PrettyObject):
         inputs = self._process_input(inputs)
 
         # add environment context
-        model = brainstate.nn.EnvironContext(
-            SNNExtractSpikes(self.net),
-            fit=False
-        )
+        model = brainstate.nn.EnvironContext(SNNExtractSpikes(self.net), fit=False)
 
         # assume the inputs have shape (time, batch, features, ...)
         n_time, n_batch = inputs.shape[:2]
-        brainstate.nn.vmap_init_all_states(
-            model,
-            state_tag='hidden',
-            axis_size=n_batch,
-        )
-        model = brainstate.nn.Vmap(
-            model,
-            vmap_states='hidden',
-            axis_name='batch' if self.normalization == 'batchnorm' else None
-        )
+        brainstate.nn.vmap_init_all_states(model, state_tag='hidden', axis_size=n_batch)
+        model = brainstate.nn.Vmap(model, vmap_states='hidden',
+                                   axis_name='batch' if self.normalization == 'batchnorm' else None)
 
         # forward propagation
         outs = brainstate.transform.for_loop(model, inputs)
@@ -1024,26 +1003,53 @@ class Experiment(brainstate.util.PrettyObject):
 
         # initialize the online learning model
         model = brainstate.nn.EnvironContext(self.net, fit=True)
-        if self.args.method == 'esd-rtrl':
-            model = brainscale.IODimVjpAlgorithm(model, self.args.etrace_decay, vjp_method=self.args.vjp_method)
-        elif self.args.method == 'd-rtrl':
-            model = brainscale.ParamDimVjpAlgorithm(model, vjp_method=self.args.vjp_method)
-        else:
-            raise ValueError(f'Unknown online learning methods: {self.args.method}.')
 
-        @brainstate.transform.vmap_new_states(state_tag='new', axis_size=n_batch)
-        def init():
-            inp = jax.ShapeDtypeStruct(inputs.shape[2:], inputs.dtype)
-            brainstate.nn.init_all_states(self.net)
+        if self.args.train_mode == 'vmap':
+            if self.args.method == 'esd-rtrl':
+                model = brainscale.IODimVjpAlgorithm(model, self.args.etrace_decay, vjp_method=self.args.vjp_method)
+            elif self.args.method == 'd-rtrl':
+                model = brainscale.ParamDimVjpAlgorithm(model, vjp_method=self.args.vjp_method)
+            else:
+                raise ValueError(f'Unknown online learning methods: {self.args.method}.')
+
+            @brainstate.transform.vmap_new_states(state_tag='new', axis_size=n_batch)
+            def init():
+                inp = jax.ShapeDtypeStruct(inputs.shape[2:], inputs.dtype)
+                brainstate.nn.init_all_states(self.net)
+                model.compile_graph(inp)
+                model.show_graph()
+
+            init()
+            model = brainstate.nn.Vmap(
+                model,
+                vmap_states='new',
+                axis_name='batch' if self.normalization == 'batchnorm' else None
+            )
+
+        elif self.args.train_mode == 'batch':
+            if self.args.method == 'esd-rtrl':
+                model = brainscale.IODimVjpAlgorithm(
+                    model,
+                    self.args.etrace_decay,
+                    vjp_method=self.args.vjp_method,
+                    mode=brainstate.mixin.Batching()
+                )
+            elif self.args.method == 'd-rtrl':
+                model = brainscale.ParamDimVjpAlgorithm(
+                    model,
+                    vjp_method=self.args.vjp_method,
+                    mode=brainstate.mixin.Batching()
+                )
+            else:
+                raise ValueError(f'Unknown online learning methods: {self.args.method}.')
+
+            inp = jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype)
+            brainstate.nn.init_all_states(self.net, batch_size=n_batch)
             model.compile_graph(inp)
             model.show_graph()
 
-        init()
-        model = brainstate.nn.Vmap(
-            model,
-            vmap_states='new',
-            axis_name='batch' if self.normalization == 'batchnorm' else None
-        )
+        else:
+            raise ValueError('Unknown training mode.')
 
         def _etrace_grad(inp):
             out = model(inp)
@@ -1137,7 +1143,7 @@ class Experiment(brainstate.util.PrettyObject):
                 use_bias=self.use_bias,
                 use_readout_layer=True,
             )
-            self.logger.warning(f"\nCreated new spiking model:\n {self.net}\n")
+            # self.logger.warning(f"\nCreated new spiking model:\n {self.net}\n")
 
         else:
             raise ValueError(f"Invalid model type {self.net_type}")
@@ -1180,8 +1186,9 @@ class Experiment(brainstate.util.PrettyObject):
         end = time.time()
         elapsed = str(timedelta(seconds=end - start))
         self.logger.warning(f"Epoch {e}: train elapsed time={elapsed}")
+        return train_acc
 
-    def valid_one_epoch(self, e, best_epoch, best_acc):
+    def valid_one_epoch(self, e, best_epoch, best_acc, patience_counter):
         """
         This function tests the model with a single pass over the
         validation split of the dataset.
@@ -1205,23 +1212,27 @@ class Experiment(brainstate.util.PrettyObject):
         valid_acc = np.mean(accs)
         self.logger.warning(f"Epoch {e}: valid acc={valid_acc}")
 
-        # # Update learning rate
-        # self.scheduler.step(valid_acc)
-
         # Update the best epoch and accuracy
         if valid_acc > best_acc:
             best_acc = valid_acc
             best_epoch = e
+            patience_counter = 0
+            self.logger.warning('New best model found!')
 
             # Save best model
             if self.save_best:
                 save_model_states(
                     f"{self.checkpoint_dir}/best_model.pth", self.net, valid_acc=best_acc, epoch=best_epoch)
                 self.logger.warning(f"\nBest model saved with valid acc={valid_acc}")
+        else:
+            self.logger.warning('No improvement.')
+            patience_counter += 1
+            if patience_counter % self.args.patience == self.args.patience // 2:
+                self.logger.warning('Learning rate reduced by a factor of 0.2 due to lack of improvement.')
 
         self.logger.warning("\n-----------------------------\n")
 
-        return best_epoch, best_acc
+        return best_epoch, best_acc, patience_counter
 
     def test_one_epoch(self, test_loader):
         """
