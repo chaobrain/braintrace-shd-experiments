@@ -32,7 +32,7 @@ from brainstate.typing import ArrayLike
 
 from general_utils import setup_logging, load_model_states, save_model_states, copy_source
 from init import KaimingUniform, Orthogonal
-from shd_dataset import load_shd_data
+from dataset import load_dataset
 
 
 def print_model_options(logger, args):
@@ -691,7 +691,7 @@ class Experiment(brainstate.util.PrettyObject):
     def f_test(self, n_fig=5):
         data = iter(self.valid_loader)
 
-        for _ in range(5):
+        for _ in range(2):
             x, y = next(data)
 
             # validation
@@ -699,13 +699,14 @@ class Experiment(brainstate.util.PrettyObject):
             print(x.shape)
             outs = self._validate(x)
             outs = jax.tree.map(np.asarray, outs)
+            outs = [x] + outs
 
             # visualization
             fig, gs = braintools.visualize.get_figure(len(outs), n_fig, 3, 3)
             for i, out in enumerate(outs):
                 for i_img in range(n_fig):
                     fig.add_subplot(gs[i, i_img])
-                    spikes = out[:, i_img]
+                    spikes = out[i_img]  # [time, neurons]
                     spikes = np.reshape(spikes, (spikes.shape[0], -1))
                     # Create a raster plot of spikes
                     neuron_indices = np.where(spikes > 0)
@@ -801,9 +802,9 @@ class Experiment(brainstate.util.PrettyObject):
         exp_folder = self.new_exp_folder if self.new_exp_folder is not None else './'
         # Generate a path for new model from chosen config
         if self.args.method == 'esd-rtrl':
-            outname = f'{exp_folder}/{self.args.method}_{self.args.etrace_decay}/'
+            outname = f'{exp_folder}/{self.args.method}_{self.args.etrace_decay}_{self.args.dataset}/'
         else:
-            outname = f'{exp_folder}/{self.args.method}/'
+            outname = f'{exp_folder}/{self.args.method}_{self.args.dataset}/'
         outname = outname + self.net_type + "_"
         outname += str(self.nb_layers) + "lay" + str(self.nb_hiddens)
         outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
@@ -829,7 +830,7 @@ class Experiment(brainstate.util.PrettyObject):
         """
         This function prepares dataloaders for the desired dataset.
         """
-        results = load_shd_data(self.args)
+        results = load_dataset(self.args)
 
         self.nb_inputs = results['in_shape']
         self.nb_outputs = results['out_shape']

@@ -19,7 +19,7 @@ import platform
 
 os.environ['JAX_TRACEBACK_FILTERING'] = 'off'
 from general_utils import MyArgumentParser
-from shd_dataset import add_data_augment_args
+from dataset import add_data_augment_args
 
 
 def strtobool(val):
@@ -33,9 +33,6 @@ def strtobool(val):
 
 
 num_worker = 0 if platform.system() == 'Windows' else 5
-shd_path = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), './data/SHD/')
-)
 
 
 def add_training_options(parser):
@@ -43,10 +40,10 @@ def add_training_options(parser):
                         help="Path to experiment folder with a pretrained model to load. Note "
                              "that the same path will be used to store the current experiment.")
     parser.add_argument("--new_exp_folder", type=str, default=None, help="Path to output folder to store experiment.")
-    parser.add_argument("--data_folder", type=str, default=shd_path, help="Path to dataset folder.")
     parser.add_argument("--mode", type=str, default='train')
     args, _ = parser.parse_known_args()
 
+    parser.add_argument('--dataset', type=str, default='shd', choices=['shd', 'nmnist', 'gesture'])
     parser.add_argument('--data_length', type=int, default=100)
     parser.add_argument("--save_best", type=lambda x: bool(strtobool(str(x))), default=True,
                         help="If True, the model from the epoch with the highest validation "

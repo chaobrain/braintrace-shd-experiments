@@ -26,3 +26,19 @@ python offline_main.py --model_type RadLIF --nb_epochs 150 --nb_hiddens 1024 --n
 
 
 
+
+# N-MNIST
+
+```bash
+
+ python .\offline_main.py --dataset nmnist --model_type RLIF  --inp_scale 2000. --rec_scale 200.  --normalization batchnorm
+ python .\offline_main.py --dataset nmnist --model_type RLIF  --inp_scale 1000. --rec_scale 200.  --normalization batchnorm
+
+python .\offline_main.py --dataset nmnist --model_type RLIF  --inp_scale 100. --rec_scale 10. --mode test
+
+python .\offline_main.py --dataset nmnist --model_type RadLIF  --inp_scale 100. --rec_scale 10. --mode test
+
+```
+
+
+

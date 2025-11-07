@@ -1,10 +1,12 @@
 import copy
+import os
 import platform
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import h5py
 import numpy as np
+import tonic.datasets
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
@@ -364,18 +366,26 @@ def _build_aug_config(args) -> AugmentationConfig:
     return cfg
 
 
-def load_shd_data(args):
+def load_common(args, name: str):
+    name = name.upper()
     use_augm = getattr(args, "use_augm", False)
     aug_config = _build_aug_config(args) if use_augm else AugmentationConfig()
+    data_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), './data/'))
 
+    dataset_cls = getattr(tonic.datasets, name)
+
+    dataset_cls(save_to=data_folder, train=True)
+    dataset_cls(save_to=data_folder, train=False)
+
+    data_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), f'./data/{name}/'))
     test_aug_config = AugmentationConfig(
         normalise_spike_number=aug_config.normalise_spike_number,
         seed=aug_config.seed,
     )
 
     train_dataset = EventPropSpikingDataset(
-        "shd",
-        args.data_folder,
+        name.lower(),
+        data_folder,
         "train",
         args.data_length,
         transform=None,
@@ -383,8 +393,8 @@ def load_shd_data(args):
     )
 
     test_dataset = EventPropSpikingDataset(
-        "shd",
-        args.data_folder,
+        name.lower(),
+        data_folder,
         "test",
         args.data_length,
         transform=None,
@@ -411,9 +421,87 @@ def load_shd_data(args):
         {
             "train_loader": train_loader,
             "test_loader": test_loader,
-            "in_shape": 700,
+            "in_shape": np.prod(dataset_cls.sensor_size),
             "out_shape": 20,
-            "input_process": lambda x: x,
+        }
+    )
+
+
+def load_shd_data(args):
+    return load_common(args, "shd")
+
+
+def load_ssc_data(args):
+    use_augm = getattr(args, "use_augm", False)
+    aug_config = _build_aug_config(args) if use_augm else AugmentationConfig()
+    data_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), './data/'))
+
+    tonic.datasets.SSC(save_to=data_folder, split='train')
+    tonic.datasets.SSC(save_to=data_folder, split='test')
+    tonic.datasets.SSC(save_to=data_folder, split='valid')
+
+    data_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), f'./data/SSC/'))
+    test_aug_config = AugmentationConfig(
+        normalise_spike_number=aug_config.normalise_spike_number,
+        seed=aug_config.seed,
+    )
+
+    train_dataset = EventPropSpikingDataset(
+        'ssc',
+        data_folder,
+        "train",
+        args.data_length,
+        transform=None,
+        aug_config=aug_config,
+    )
+    val_dataset = EventPropSpikingDataset(
+        'ssc',
+        data_folder,
+        "valid",
+        args.data_length,
+        transform=None,
+        aug_config=aug_config,
+    )
+
+    test_dataset = EventPropSpikingDataset(
+        'ssc',
+        data_folder,
+        "test",
+        args.data_length,
+        transform=None,
+        aug_config=test_aug_config,
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        collate_fn=train_dataset.generate_batch,
+        shuffle=True,
+        num_workers=0 if platform.system() == "Windows" else args.num_workers,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        collate_fn=val_dataset.generate_batch,
+        shuffle=True,
+        num_workers=0 if platform.system() == "Windows" else args.num_workers,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        collate_fn=test_dataset.generate_batch,
+        shuffle=False,
+        num_workers=0 if platform.system() == "Windows" else args.num_workers,
+    )
+
+    import brainstate
+    return brainstate.util.DotDict(
+        {
+            "train_loader": train_loader,
+            "val_loader": val_loader,
+            "test_loader": test_loader,
+            "in_shape": np.prod(tonic.datasets.SSC.sensor_size),
+            "out_shape": 20,
         }
     )
 
@@ -475,3 +563,23 @@ def add_data_augment_args(parser):
             help="Base random seed for augmentation pipeline.",
         )
     return parser
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--use_augm', action='store_true', help='Use data augmentation.')
+    parser.add_argument('--data_length', type=int, default=100, help='Number of time steps.')
+    parser.add_argument('--batch_size', type=int, default=16, help='Batch size.')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of data loader workers.')
+    parser = add_data_augment_args(parser)
+    args = parser.parse_args()
+
+    data = load_shd_data(args)
+    data = load_ssc_data(args)
+    train_loader = data.train_loader
+    for batch_idx, (inputs, targets) in enumerate(train_loader):
+        print(f'Batch {batch_idx}: inputs shape {inputs.shape}, targets shape {targets.shape}')
+        if batch_idx >= 2:
+            break
