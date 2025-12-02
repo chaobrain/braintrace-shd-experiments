@@ -15,3 +15,11 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 ```
 
+## Experiments
+
+The experiments are implemented in the `param-exploration` folder. Run the experiments as follows:
+
+```bash
+bash param-exploration/bptt-0-none-batch-3layer-lr-device0.sh
+```
+
