@@ -1,4 +1,8 @@
-# ``BrainScale`` experiments on spiking neural networks
+# ``BrainTrace`` experiments on spiking neural networks
+
+
+
+See [braintrace](https://github.com/chaobrain/braintrace) repository for more details.
 
 
 
