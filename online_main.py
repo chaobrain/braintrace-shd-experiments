@@ -19,7 +19,7 @@ import platform
 
 os.environ['JAX_TRACEBACK_FILTERING'] = 'off'
 from general_utils import MyArgumentParser
-from dataset import add_data_augment_args
+from dataset_shd import add_data_augment_args
 
 
 def strtobool(val):

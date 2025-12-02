@@ -7,27 +7,19 @@
 
 ```bash
 
-pip install BrainX[cuda12]==2025.10.20
-pip install BrainX[cuda13]==2025.10.20
-pip install h5py matplotlib msgpack prettytable tonic 
+pip install BrainX[cuda12]
+pip install BrainX[cuda13]
+pip install tonic
+pip install h5py matplotlib msgpack prettytable numpy -U
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 ```
 
+## Experiments
 
-## Datasets
+The experiments are implemented in the `param-exploration` folder. Run the experiments as follows:
 
-Download SHD dataset from the following link and place it in the `data/SHD/` folder:
-
-- https://zenkelab.org/datasets/
-
-With file structure as follows:
-
+```bash
+bash param-exploration/bptt-0-none-batch-3layer-lr-device0.sh
 ```
-data/
-└── SHD
-    ├── shd_train.h5
-    └── shd_test.h5
-```
-
 

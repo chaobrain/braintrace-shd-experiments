@@ -33,7 +33,7 @@ from brainstate.typing import ArrayLike
 
 from general_utils import setup_logging, load_model_states, save_model_states, copy_source
 from init import KaimingUniform, Orthogonal
-from dataset import load_dataset
+from dataset_shd import load_shd_data
 
 
 def print_model_options(logger, args):
@@ -1078,7 +1078,7 @@ class Experiment(brainstate.util.PrettyObject):
         """
         This function prepares dataloaders for the desired dataset.
         """
-        results = load_dataset(self.args)
+        results = load_shd_data(self.args)
 
         self.nb_inputs = results['in_shape']
         self.nb_outputs = results['out_shape']
